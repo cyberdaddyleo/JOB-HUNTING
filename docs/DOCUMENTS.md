@@ -38,7 +38,7 @@
 
 `renderDocument(material, kind, format)` 为异步函数，返回 `{ buffer, mime, filename }`。`kind` 为 `resume`、`cover-letter` 或 `checklist`；`format` 为 `docx`、`md` 或 `html`。文件名去除路径分隔符和控制字符；HTML 与 Markdown 中的用户文字按对应格式转义。HTML 不含脚本或外部资源。
 
-- `POST /api/materials`，请求 `{ "jobId": "..." }`，生成并持久化材料。
+- `POST /api/materials`，请求 `{ "jobId": "..." }`，生成并持久化材料；相同岗位与档案版本可复用已有材料。点击“重新生成”发送 `{ "jobId": "...", "regenerate": true }`，使用当前 AI 配置重新生成。
 - `GET /api/materials/:id/download?kind=resume&format=docx`，下载具体文件。
 - `/api/bootstrap` 包含已保存的 `materials` 和当前 `profileRevision`。
 

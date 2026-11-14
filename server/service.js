@@ -16,7 +16,7 @@ export function log(state, action, detail, status = 'info') {
 export function find(items, id, label = '记录') { return items.find(item => item.id === id) || fail(`${label}不存在`, 404); }
 const day = date => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date(date));
 
-export function createService(store, { env = process.env, dataDir, fetchImpl = fetch, sendMail = mail => sendSmtp(mail, env), readMail = () => readImap(env) } = {}) {
+export function createService(store, { env = process.env, dataDir, fetchImpl = fetch, getAIEnv = () => env, sendMail = mail => sendSmtp(mail, env), readMail = () => readImap(env) } = {}) {
   const locks = new Map();
   let automationRunning = false;
   const exclusive = (key, work) => {
@@ -26,13 +26,13 @@ export function createService(store, { env = process.env, dataDir, fetchImpl = f
     return pending;
   };
   const service = {
-    async createMaterial(jobId) {
+    async createMaterial(jobId, { regenerate = false } = {}) {
       return exclusive(`material:${jobId}`, async () => {
         const snapshot = store.read();
         const job = find(snapshot.jobs, jobId, '岗位');
         const current = snapshot.materials?.find(m => m.jobId === jobId && m.profileRevision === (snapshot.profileRevision || 0));
-        if (current) return current;
-        const material = await generateMaterials(snapshot.profile, job, { env, fetchImpl, profileRevision: snapshot.profileRevision || 0 });
+        if (current && !regenerate) return current;
+        const material = await generateMaterials(snapshot.profile, job, { env: getAIEnv(), fetchImpl, profileRevision: snapshot.profileRevision || 0 });
         return store.update(state => {
           if ((state.profileRevision || 0) !== (snapshot.profileRevision || 0)) fail('档案已更新，请重新生成文件', 409);
           state.materials ||= [];
@@ -52,7 +52,7 @@ export function createService(store, { env = process.env, dataDir, fetchImpl = f
         const job = find(snapshot.jobs, jobId, '岗位');
         if (expiredJob(job)) fail('该岗位已过已知报名截止日，请核实最新公告后再准备投递', 409);
         if (job.recordType === 'announcement') fail('这是一篇待核对的招聘公告，请先从官方职位表提取具体岗位并导入');
-        const draft = await buildApplicationDraft(snapshot.profile, job, env, fetchImpl);
+        const draft = await buildApplicationDraft(snapshot.profile, job, getAIEnv(), fetchImpl);
         return store.update(state => {
           if ((snapshot.profileRevision || 0) !== (state.profileRevision || 0)) fail('档案在生成过程中已更新，请重新生成草稿', 409);
           const duplicate = state.applications.find(application => application.jobId === jobId);
@@ -70,7 +70,7 @@ export function createService(store, { env = process.env, dataDir, fetchImpl = f
         const snapshot = store.read();
         const item = find(snapshot.applications, id, '申请');
         if (item.sentAt || item.sendState) fail('已发送或待核对的申请不能重新生成', 409);
-        const draft = await buildApplicationDraft(snapshot.profile, find(snapshot.jobs, item.jobId, '岗位'), env, fetchImpl);
+        const draft = await buildApplicationDraft(snapshot.profile, find(snapshot.jobs, item.jobId, '岗位'), getAIEnv(), fetchImpl);
         return store.update(state => {
           const application = find(state.applications, id, '申请');
           if (application.sentAt || application.sendState || (snapshot.profileRevision || 0) !== (state.profileRevision || 0)) fail('申请或档案在生成过程中已更新，请重试', 409);
@@ -140,13 +140,13 @@ export function createService(store, { env = process.env, dataDir, fetchImpl = f
     async makeReply(id) {
       const snapshot = store.read();
       const message = find(snapshot.messages, id, '邮件');
-      const draft = await draftReply(message, snapshot.profile, env, fetchImpl);
+      const draft = await draftReply(message, snapshot.profile, getAIEnv(), fetchImpl);
       await store.update(state => { const message = find(state.messages, id); if (message.sendState || message.replySentAt) fail('回复已发送或正在发送', 409); message.replyDraft = draft.replyDraft; message.replyProfileRevision = snapshot.profileRevision || 0; });
       return draft;
     },
     async coach(jobId, stage, context) {
       const state = store.read();
-      return coachResponse(state.profile, find(state.jobs, jobId, '岗位'), stage, context, env, fetchImpl);
+      return coachResponse(state.profile, find(state.jobs, jobId, '岗位'), stage, context, getAIEnv(), fetchImpl);
     },
     async runAutomation() {
       if (automationRunning) return;

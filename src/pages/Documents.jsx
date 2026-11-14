@@ -39,7 +39,7 @@ export default function Documents() {
   const selectJob = value => { setJobId(value); setActiveId(''); try { sessionStorage.setItem('jobpilot:documentJob', value); } catch {} };
   const generate = async event => {
     event.preventDefault(); setBusy(true);
-    try { const next = await mutate('/materials', { jobId: selectedId }); setActiveId(next.id); notify('岗位简历、求职信与证据清单已生成，可下载为 Word 文件。'); }
+    try { const next = await mutate('/materials', { jobId: selectedId, regenerate: Boolean(material) }); setActiveId(next.id); notify('岗位简历、求职信与证据清单已生成，可下载为 Word 文件。'); }
     catch {} finally { setBusy(false); }
   };
   return <>

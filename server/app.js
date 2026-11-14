@@ -10,6 +10,7 @@ import { saveResume, deleteResume } from './resume.js';
 import { createBatchService, applicationFingerprint } from './batches.js';
 import { renderDocument } from './documents.js';
 import { validatePageSource } from './page-source.js';
+import { createAIConfig } from './ai-config.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const localHosts = new Set(['localhost', '127.0.0.1', '[::1]']);
@@ -18,8 +19,9 @@ export async function createApp(options = {}) {
   const env = options.env || process.env;
   const dataDir = options.dataDir || env.DATA_DIR || path.join(root, 'data');
   const store = options.store || await createStore(dataDir);
+  const aiConfig = await createAIConfig({ directory: dataDir, env, fetchImpl: options.fetchImpl, testTimeoutMs: options.aiTestTimeoutMs });
   const applicationView = id => { const state = store.read(); return applicationSnapshot(state, find(state.applications, id, '申请')); };
-  const service = createService(store, { ...options, env, dataDir });
+  const service = createService(store, { ...options, env, dataDir, getAIEnv: aiConfig.getAIEnv });
   const batches = createBatchService(store, service, { intervalMs: options.batchIntervalMs ?? 2000 });
   const app = express();
   app.disable('x-powered-by');
@@ -52,10 +54,13 @@ export async function createApp(options = {}) {
     next();
   });
   app.get('/api/health', (_req, res) => res.json({ ok: true }));
+  app.get('/api/ai-config', (_req, res) => res.json(aiConfig.read()));
+  app.put('/api/ai-config', async (req, res) => res.json(await aiConfig.save(req.body)));
+  app.post('/api/ai-config/test', async (req, res) => res.json(await aiConfig.test(req.body)));
   app.get('/api/bootstrap', (_req, res) => {
     const state = store.read();
     const { profile, applications, messages, sources, settings, logs } = state;
-    res.json({ profile, profileRevision: state.profileRevision || 0, profileIsDemo: demoProfile(profile), materials: state.materials || [], batches: state.batches || [], jobs: state.jobs.map(job => ({ ...job, match: matchJob(profile, job) })), applications: applications.map(item => applicationSnapshot(state, item)), messages, sources, settings, logs, capabilities: capabilities(env) });
+    res.json({ profile, profileRevision: state.profileRevision || 0, profileIsDemo: demoProfile(profile), materials: state.materials || [], batches: state.batches || [], jobs: state.jobs.map(job => ({ ...job, match: matchJob(profile, job) })), applications: applications.map(item => applicationSnapshot(state, item)), messages, sources, settings, logs, capabilities: capabilities(aiConfig.getAIEnv()) });
   });
   app.put('/api/profile', async (req, res) => {
     const profile = validateProfile(req.body);
@@ -100,7 +105,7 @@ export async function createApp(options = {}) {
     res.json(result);
   });
   app.post('/api/sources/:id/sync', async (req, res) => res.json(await service.syncSource(req.params.id)));
-  app.post('/api/materials', async (req, res) => res.json(await service.createMaterial(string(req.body.jobId, 'jobId', 100, true))));
+  app.post('/api/materials', async (req, res) => res.json(await service.createMaterial(string(req.body.jobId, 'jobId', 100, true), { regenerate: 'regenerate' in req.body ? boolean(req.body.regenerate, 'regenerate') : false })));
   app.get('/api/materials/:id/download', async (req, res) => {
     const material = find(store.read().materials || [], req.params.id, '求职文件');
     const kind = req.query.kind || 'resume', format = req.query.format || 'docx';
